@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>TCP Congestion Control Interactive Demo - Final Version</title>
+    <style>
+        /* Styles */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+
+        #container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #control-panel {
+            background-color: #f4f4f4;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+
+        #main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 15px;
+            box-sizing: border-box;
+            overflow-y: auto;
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        .section {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 5px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+
+        button {
+            padding: 10px;
+            margin-right: 5px;
+            margin-bottom: 5px;
+        }
+
+        #graphs {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .graph {
+            width: 480px;
+            height: 320px;
+            position: relative;
+            margin: 10px;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            background-color: #fff;
+            border: 1px solid #ccc;
+        }
+
+        #event-log {
+            min-height: 320px;
+            max-height: 320px;
+            overflow-y: auto;
+            background-color: #eaeaea;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        #event-log p {
+            margin: 0 0 5px;
+        }
+
+        .checkbox-group {
+            margin-bottom: 10px;
+        }
+
+        .packet-loss-buttons {
+            margin-top: 10px;
+        }
+
+        /* Responsive Design for Smaller Screens */
+        @media (max-width: 768px) {
+            #container {
+                flex-direction: column;
+            }
+
+            #graphs {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .graph {
+                width: 90%;
+                height: auto;
+            }
+
+            #control-panel {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container">
+        <div id="control-panel">
+            <h2>Simulation Control</h2>
+            <div class="section">
+                <button id="startBtn">Start</button>
+                <button id="pauseBtn">Pause</button>
+                <button id="resetBtn">Reset</button>
+            </div>
+            <div class="section packet-loss-buttons">
+                <h3>Inject Packet Loss</h3>
+                <button id="singlePacketLossBtn">Single Packet Loss</button>
+                <button id="bulk50msPacketLossBtn">Bulk Packet Loss (50 ms)</button>
+                <button id="bulk1sPacketLossBtn">Bulk Packet Loss (1 sec)</button>
+            </div>
+        </div>
+
+        <div id="main">
+            <div id="graphs">
+                <!-- Graphs -->
+                <div class="graph">
+                    <canvas id="throughputGraph" width="480" height="320"></canvas>
+                    <div>Successful Throughput (Mbps)</div>
+                </div>
+                <div class="graph">
+                    <canvas id="transmittedPacketsGraph" width="480" height="320"></canvas>
+                    <div>Transmitted Packets per Second</div>
+                </div>
+                <div class="graph">
+                    <canvas id="retransmittedPacketsGraph" width="480" height="320"></canvas>
+                    <div>Retransmitted Packets per Second</div>
+                </div>
+            </div>
+            <h2>Event Log</h2>
+            <div id="event-log"></div>
+
+            <h2>Network Configuration</h2>
+            <div class="section">
+                <label for="bandwidth">Bandwidth (Mbps):</label>
+                <input type="number" id="bandwidth" value="1000" min="1" max="10000">
+                <label for="rtt">RTT (ms):</label>
+                <input type="number" id="rtt" value="5" min="1" max="1000">
+                <label for="packetSize">Packet Size (bytes):</label>
+                <input type="number" id="packetSize" value="1500" min="64" max="9000">
+                <label for="queueSize">Queue Size (packets):</label>
+                <input type="number" id="queueSize" value="1000" min="1" max="10000">
+                <label for="backgroundTraffic">Background Traffic (Mbps):</label>
+                <input type="number" id="backgroundTraffic" value="0" min="0" max="10000">
+            </div>
+
+            <h2>Select Algorithms</h2>
+            <div class="section checkbox-group">
+                <!-- Algorithm checkboxes -->
+                <label><input type="checkbox" class="algorithm-checkbox" value="tahoe" checked> TCP Tahoe</label>
+                <label><input type="checkbox" class="algorithm-checkbox" value="reno" checked> TCP Reno</label>
+                <label><input type="checkbox" class="algorithm-checkbox" value="newreno" checked> TCP NewReno</label>
+                <label><input type="checkbox" class="algorithm-checkbox" value="cubic" checked> TCP CUBIC</label>
+                <label><input type="checkbox" class="algorithm-checkbox" value="vegas" checked> TCP Vegas</label>
+                <label><input type="checkbox" class="algorithm-checkbox" value="bbr" checked> TCP BBR</label>
+            </div>
+
+            <h2>Algorithm Parameters</h2>
+            <div class="section" id="algorithm-params-section">
+                <!-- Algorithm-specific parameters will be dynamically added here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global Variables
+        let simulationRunning = false;
+        let simulationPaused = false;
+        let simulationInterval;
+        let animationInterval;
+        let time = 0; // in milliseconds
+        let dataPoints = {};
+        let eventLog = [];
+        let activeAlgorithms = [];
+        let algorithmInstances = {};
+        const maxTimeWindow = 30; // Show the most recent 30 seconds
+
+        // Variables for Packet Loss
+        let packetLossQueue = false; // Flag for bulk packet loss
+        let packetLossQueueEndTime = null; // End time for bulk packet loss
+        let singlePacketLossScheduled = false;
+        let singlePacketLossTime = null;
+
+        // Network Parameters
+        let networkParams = {};
+
+        // Algorithm Classes
+        class TcpAlgorithm {
+            constructor(name, params) {
+                this.name = name;
+                this.params = params;
+                this.state = {};
+            }
+
+            initializeState() {
+                // Initialize state variables common to all algorithms
+                this.state.cwnd = this.params.initialCwnd;
+                this.state.ssthresh = this.params.initialSsthresh;
+                this.state.rtt = networkParams.rtt;
+                this.state.rto = 2 * this.state.rtt / 1000; // Initial RTO in seconds
+                this.state.timeSinceLastAck = 0;
+                this.state.state = 'slow_start';
+                this.state.lastAck = 0;
+                this.state.dupAckCount = 0;
+                this.state.recoveryPoint = 0;
+                this.state.timeSinceLastSend = 0;
+                this.state.sendRate = 0;
+                this.state.transmittedPackets = 0;
+                this.state.retransmittedPackets = 0;
+                this.state.successfulPackets = 0;
+                this.state.totalPackets = 0;
+                this.state.packetLoss = false;
+                this.state.lastLossTime = 0;
+                this.state.timeoutOccurred = false;
+                this.state.baseRTT = this.state.rtt; // For Vegas
+                this.state.bandwidthEstimate = 0; // For BBR
+            }
+
+            simulate(deltaTime) {
+                // General simulation logic
+                // Reset per-interval counters
+                this.state.transmittedPackets = 0;
+                this.state.retransmittedPackets = 0;
+                this.state.successfulPackets = 0;
+
+                // Limit cwnd
+                const maxCwnd = networkParams.bdp;
+                this.state.cwnd = Math.min(this.state.cwnd, maxCwnd);
+
+                // Send packets
+                let packetsToSend = Math.floor(this.state.cwnd);
+                const maxPacketsPerInterval = networkParams.linkCapacityPacketsPerSec * deltaTime;
+                packetsToSend = Math.min(packetsToSend, maxPacketsPerInterval);
+
+                let packetLossProbability = 0;
+                if (packetLossQueue && time < packetLossQueueEndTime) {
+                    packetLossProbability = 1; // All packets lost during bulk loss
+                }
+
+                for (let i = 0; i < packetsToSend; i++) {
+                    this.state.totalPackets++;
+                    this.state.transmittedPackets++;
+                    let packetLost = false;
+
+                    // Check for scheduled single packet loss
+                    if (singlePacketLossScheduled && time >= singlePacketLossTime) {
+                        packetLost = true;
+                        singlePacketLossScheduled = false; // Only lose one packet
+                    } else if (Math.random() < packetLossProbability) {
+                        packetLost = true;
+                    }
+
+                    if (packetLost) {
+                        this.state.packetLoss = true;
+                        this.state.retransmittedPackets++;
+                        // Handle dupACKs if applicable
+                        if (this.state.dupAckCount !== undefined) {
+                            this.state.dupAckCount++;
+                        }
+                    } else {
+                        this.state.successfulPackets++;
+                        this.state.timeSinceLastAck = 0;
+                        // Reset dupACK count on successful ACK
+                        if (this.state.dupAckCount !== undefined) {
+                            this.state.dupAckCount = 0;
+                        }
+                        // For Vegas
+                        if (this.state.baseRTT) {
+                            this.state.baseRTT = Math.min(this.state.baseRTT, this.state.rtt);
+                        }
+                        // For BBR
+                        if (this.estimateBandwidth) {
+                            this.estimateBandwidth(deltaTime);
+                        }
+                    }
+                }
+
+                // Update time since last ACK
+                if (this.state.successfulPackets > 0) {
+                    this.state.timeSinceLastAck = 0;
+                } else {
+                    this.state.timeSinceLastAck += deltaTime;
+                }
+
+                // Check for timeout
+                if (this.state.timeSinceLastAck >= this.state.rto) {
+                    this.handleTimeout();
+                    this.state.timeSinceLastAck = 0;
+                }
+
+                if (this.state.packetLoss) {
+                    this.onPacketLost();
+                    this.state.packetLoss = false;
+                } else if (!this.state.timeoutOccurred) {
+                    this.onPacketAcked();
+                }
+
+                this.state.timeoutOccurred = false;
+            }
+
+            handleTimeout() {
+                // Abstract method to be implemented by subclasses
+            }
+
+            onPacketAcked() {
+                // Abstract method to be implemented by subclasses
+            }
+
+            onPacketLost() {
+                // Abstract method to be implemented by subclasses
+            }
+
+            logEvent(eventType, details) {
+                eventLog.push({
+                    timestamp: (time / 1000).toFixed(2),
+                    algorithm: this.name,
+                    eventType: eventType,
+                    details: details
+                });
+            }
+        }
+
+        // TCP Tahoe Implementation
+        class Tahoe extends TcpAlgorithm {
+            handleTimeout() {
+                this.state.lastLossTime = time / 1000;
+                this.state.ssthresh = Math.max(this.state.cwnd / 2, 1);
+                this.state.cwnd = 1;
+                this.state.state = 'slow_start';
+                this.state.timeoutOccurred = true;
+                this.logEvent('Timeout', `Retransmission timeout occurred. cwnd reset to 1, ssthresh set to ${this.state.ssthresh.toFixed(2)}`);
+            }
+
+            onPacketAcked() {
+                // Do not increase cwnd during bulk loss
+                if (!packetLossQueue) {
+                    if (this.state.cwnd < this.state.ssthresh) {
+                        // Slow Start
+                        this.state.cwnd += 1;
+                    } else {
+                        // Congestion Avoidance
+                        this.state.cwnd += 1 / this.state.cwnd;
+                    }
+                }
+            }
+
+            onPacketLost() {
+                this.handleTimeout();
+            }
+        }
+
+        // TCP Reno Implementation
+        class Reno extends TcpAlgorithm {
+            handleTimeout() {
+                this.state.lastLossTime = time / 1000;
+                this.state.ssthresh = Math.max(this.state.cwnd / 2, 1);
+                this.state.cwnd = 1;
+                this.state.state = 'slow_start';
+                this.state.timeoutOccurred = true;
+                this.logEvent('Timeout', `Retransmission timeout occurred. cwnd reset to 1, ssthresh set to ${this.state.ssthresh.toFixed(2)}`);
+                this.state.dupAckCount = 0;
+            }
+
+            onPacketAcked() {
+                if (this.state.state === 'fast_recovery') {
+                    // Exit fast recovery
+                    this.state.cwnd = this.state.ssthresh;
+                    this.state.state = 'congestion_avoidance';
+                    this.logEvent('Fast Recovery', 'Exiting fast recovery.');
+                }
+
+                // Do not increase cwnd during bulk loss
+                if (!packetLossQueue) {
+                    if (this.state.cwnd < this.state.ssthresh) {
+                        // Slow Start
+                        this.state.cwnd += 1;
+                    } else {
+                        // Congestion Avoidance
+                        this.state.cwnd += 1 / this.state.cwnd;
+                    }
+                }
+            }
+
+            onPacketLost() {
+                if (this.state.dupAckCount >= 3) {
+                    // Fast Retransmit and Fast Recovery
+                    this.state.ssthresh = Math.max(this.state.cwnd / 2, 1);
+                    this.state.cwnd = this.state.ssthresh + 3; // As per Reno's fast recovery
+                    this.state.state = 'fast_recovery';
+                    this.logEvent('Packet Loss', `Fast retransmit triggered. Entering fast recovery. cwnd set to ${this.state.cwnd.toFixed(2)}, ssthresh set to ${this.state.ssthresh.toFixed(2)}`);
+                    this.state.dupAckCount = 0;
+                }
+            }
+        }
+
+        // TCP NewReno Implementation
+        class NewReno extends TcpAlgorithm {
+            handleTimeout() {
+                this.state.lastLossTime = time / 1000;
+                this.state.ssthresh = Math.max(this.state.cwnd / 2, 1);
+                this.state.cwnd = 1;
+                this.state.state = 'slow_start';
+                this.state.timeoutOccurred = true;
+                this.logEvent('Timeout', `Retransmission timeout occurred. cwnd reset to 1, ssthresh set to ${this.state.ssthresh.toFixed(2)}`);
+                this.state.dupAckCount = 0;
+            }
+
+            onPacketAcked() {
+                if (this.state.state === 'fast_recovery') {
+                    // Handle partial ACKs
+                    this.onPartialAck();
+                } else {
+                    // Do not increase cwnd during bulk loss
+                    if (!packetLossQueue) {
+                        if (this.state.cwnd < this.state.ssthresh) {
+                            // Slow Start
+                            this.state.cwnd += 1;
+                        } else {
+                            // Congestion Avoidance
+                            this.state.cwnd += 1 / this.state.cwnd;
+                        }
+                    }
+                }
+            }
+
+            onPacketLost() {
+                if (this.state.dupAckCount >= 3) {
+                    // Enter fast recovery
+                    this.state.ssthresh = Math.max(this.state.cwnd / 2, 1);
+                    this.state.cwnd = this.state.ssthresh + 3;
+                    this.state.state = 'fast_recovery';
+                    this.logEvent('Packet Loss', `Fast retransmit triggered. Entering fast recovery. cwnd set to ${this.state.cwnd.toFixed(2)}, ssthresh set to ${this.state.ssthresh.toFixed(2)}`);
+                    this.state.dupAckCount = 0;
+                }
+            }
+
+            onPartialAck() {
+                // Stay in fast recovery
+                this.state.cwnd -= 1;
+                this.logEvent('Partial ACK', `Partial ACK received. cwnd decreased to ${this.state.cwnd.toFixed(2)}`);
+                if (this.state.cwnd <= this.state.ssthresh) {
+                    // Exit fast recovery
+                    this.state.state = 'congestion_avoidance';
+                    this.logEvent('Fast Recovery', 'Exiting fast recovery.');
+                }
+            }
+        }
+
+        // TCP CUBIC Implementation
+        class Cubic extends TcpAlgorithm {
+            handleTimeout() {
+                this.state.lastLossTime = time / 1000;
+                this.state.ssthresh = this.state.cwnd * 0.7;
+                this.state.cwnd = 1;
+                this.state.timeoutOccurred = true;
+                this.logEvent('Timeout', `Retransmission timeout occurred. cwnd reset to 1, ssthresh set to ${this.state.ssthresh.toFixed(2)}`);
+            }
+
+            onPacketAcked() {
+                // Do not increase cwnd during bulk loss
+                if (!packetLossQueue) {
+                    const C = this.params.cubicC;
+                    const beta = this.params.cubicBeta;
+                    const t = (time / 1000) - this.state.lastLossTime;
+                    const K = Math.cbrt(this.state.ssthresh * (1 - beta) / C);
+                    const diff = t - K;
+                    const cwndCubic = C * Math.pow(diff > 0 ? diff : 0, 3) + this.state.ssthresh;
+                    this.state.cwnd = Math.min(cwndCubic, networkParams.bdp);
+                }
+            }
+
+            onPacketLost() {
+                this.state.lastLossTime = time / 1000;
+                this.state.ssthresh = this.state.cwnd * 0.7;
+                this.state.cwnd = this.state.ssthresh;
+                this.logEvent('Packet Loss', `Packet loss detected. cwnd and ssthresh reduced to ${this.state.ssthresh.toFixed(2)}`);
+            }
+        }
+
+        // TCP Vegas Implementation
+        class Vegas extends TcpAlgorithm {
+            handleTimeout() {
+                this.state.lastLossTime = time / 1000;
+                this.state.cwnd *= 0.5;
+                this.state.timeoutOccurred = true;
+                this.logEvent('Timeout', `Retransmission timeout occurred. cwnd reduced to ${this.state.cwnd.toFixed(2)}`);
+            }
+
+            onPacketAcked() {
+                // Do not increase cwnd during bulk loss
+                if (!packetLossQueue) {
+                    const alpha = this.params.vegasAlpha;
+                    const beta = this.params.vegasBeta;
+                    const expectedRate = this.state.cwnd / this.state.baseRTT;
+                    const actualRate = this.state.cwnd / this.state.rtt;
+                    const diff = expectedRate - actualRate;
+
+                    if (diff < alpha) {
+                        this.state.cwnd += 1;
+                    } else if (diff > beta) {
+                        this.state.cwnd -= 1;
+                    }
+                    this.state.cwnd = Math.max(1, this.state.cwnd);
+                }
+            }
+
+            onPacketLost() {
+                this.state.cwnd *= 0.5;
+                this.logEvent('Packet Loss', `Packet loss detected. cwnd reduced to ${this.state.cwnd.toFixed(2)}`);
+            }
+        }
+
+        // TCP BBR Implementation
+        class BBR extends TcpAlgorithm {
+            handleTimeout() {
+                // BBR handles timeouts differently
+                this.state.cwnd *= 0.9;
+                this.logEvent('Timeout', `Retransmission timeout occurred. cwnd reduced to ${this.state.cwnd.toFixed(2)}`);
+            }
+
+            onPacketAcked() {
+                // Do not increase cwnd during bulk loss
+                if (!packetLossQueue) {
+                    const pacingGain = this.params.bbrPacingGain;
+                    this.state.cwnd = pacingGain * networkParams.bdp;
+                }
+            }
+
+            onPacketLost() {
+                this.state.cwnd *= 0.9;
+                this.logEvent('Packet Loss', `Packet loss detected. BBR reduces cwnd to ${this.state.cwnd.toFixed(2)}`);
+            }
+
+            estimateBandwidth(deltaTime) {
+                const deliveredData = this.state.successfulPackets * networkParams.packetSize * 8; // bits
+                const bw = deliveredData / (deltaTime * 1000000); // Mbps
+                this.state.bandwidthEstimate = bw;
+            }
+        }
+
+        // Map algorithm names to classes
+        const algorithmClasses = {
+            'tahoe': Tahoe,
+            'reno': Reno,
+            'newreno': NewReno,
+            'cubic': Cubic,
+            'vegas': Vegas,
+            'bbr': BBR
+        };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeAlgorithmParams();
+            addEventListeners();
+            initializeGraphs();
+        });
+
+        function initializeAlgorithmParams() {
+            const algorithmParamsSection = document.getElementById('algorithm-params-section');
+            algorithmParamsSection.innerHTML = '';
+
+            for (const algoName in algorithmClasses) {
+                const paramsDiv = document.createElement('div');
+                paramsDiv.id = `params-${algoName}`;
+                paramsDiv.style.display = 'none';
+
+                const label = document.createElement('label');
+                label.innerText = `Parameters for TCP ${capitalizeFirstLetter(algoName)}`;
+                paramsDiv.appendChild(label);
+
+                // Common parameters
+                addAlgorithmParam(paramsDiv, `Initial cwnd (packets):`, `initialCwnd-${algoName}`, 10, 1, 1000);
+                addAlgorithmParam(paramsDiv, `Initial ssthresh (packets):`, `initialSsthresh-${algoName}`, 65535, 1, 100000);
+
+                // Algorithm-specific parameters
+                if (algoName === 'cubic') {
+                    addAlgorithmParam(paramsDiv, 'Cubic Scaling Constant (C):', `cubicC-${algoName}`, 0.4, 0.1, 1, 0.1);
+                    addAlgorithmParam(paramsDiv, 'Beta (β):', `cubicBeta-${algoName}`, 0.7, 0.1, 1, 0.1);
+                } else if (algoName === 'vegas') {
+                    addAlgorithmParam(paramsDiv, 'Alpha (α):', `vegasAlpha-${algoName}`, 2, 1, 10, 1);
+                    addAlgorithmParam(paramsDiv, 'Beta (β):', `vegasBeta-${algoName}`, 4, 1, 10, 1);
+                } else if (algoName === 'bbr') {
+                    addAlgorithmParam(paramsDiv, 'Pacing Gain:', `bbrPacingGain-${algoName}`, 1.25, 0.1, 2, 0.05);
+                }
+
+                algorithmParamsSection.appendChild(paramsDiv);
+            }
+
+            // Show/hide parameters based on selected algorithms
+            const checkboxes = document.querySelectorAll('.algorithm-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', updateActiveAlgorithms);
+            });
+            updateActiveAlgorithms();
+        }
+
+        function updateActiveAlgorithms() {
+            activeAlgorithms = [];
+            const checkboxes = document.querySelectorAll('.algorithm-checkbox');
+            checkboxes.forEach(checkbox => {
+                const paramsDiv = document.getElementById(`params-${checkbox.value}`);
+                if (checkbox.checked) {
+                    activeAlgorithms.push(checkbox.value);
+                    paramsDiv.style.display = 'block';
+                } else {
+                    paramsDiv.style.display = 'none';
+                }
+            });
+        }
+
+        function addAlgorithmParam(parentDiv, labelText, id, defaultValue, min, max, step = 1) {
+            const label = document.createElement('label');
+            label.htmlFor = id;
+            label.innerText = labelText;
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.id = id;
+            input.value = defaultValue;
+            input.min = min;
+            input.max = max;
+            input.step = step;
+            parentDiv.appendChild(label);
+            parentDiv.appendChild(input);
+        }
+
+        function capitalizeFirstLetter(string) {
+            return string.charAt(0).toUpperCase() + string.slice(1);
+        }
+
+        // Event listeners for packet loss buttons
+        function addEventListeners() {
+            document.getElementById('startBtn').addEventListener('click', startSimulation);
+            document.getElementById('pauseBtn').addEventListener('click', pauseSimulation);
+            document.getElementById('resetBtn').addEventListener('click', resetSimulation);
+            document.getElementById('singlePacketLossBtn').addEventListener('click', () => injectPacketLoss('single'));
+            document.getElementById('bulk1sPacketLossBtn').addEventListener('click', () => injectPacketLoss('bulk1s'));
+            document.getElementById('bulk50msPacketLossBtn').addEventListener('click', () => injectPacketLoss('bulk50ms'));
+        }
+
+        // Function to inject packet loss
+        function injectPacketLoss(type) {
+            if (type === 'single') {
+                singlePacketLossScheduled = true;
+                singlePacketLossTime = time + 10; // Schedule packet loss 10 ms from now
+                eventLog.push({
+                    timestamp: (time / 1000).toFixed(2),
+                    algorithm: 'Network',
+                    eventType: 'Packet Loss',
+                    details: `User-injected single packet loss at time ${(time / 1000).toFixed(2)}s`
+                });
+            } else if (type === 'bulk') {
+                packetLossQueue = true;
+                packetLossQueueEndTime = time + 1000; // 1 second duration
+                eventLog.push({
+                    timestamp: (time / 1000).toFixed(2),
+                    algorithm: 'Network',
+                    eventType: 'Packet Loss',
+                    details: `User-injected bulk packet loss for 1 second at time ${(time / 1000).toFixed(2)}s`
+                });
+            }
+            updateEventLog();
+        }
+
+        function initializeGraphs() {
+            initializeGraph('throughputGraph');
+            initializeGraph('transmittedPacketsGraph');
+            initializeGraph('retransmittedPacketsGraph');
+        }
+
+        function initializeGraph(canvasId) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw axes
+            drawAxes(ctx, canvas, canvasId);
+        }
+
+        function drawAxes(ctx, canvas, canvasId) {
+            const width = canvas.width;
+            const height = canvas.height;
+
+            // X and Y axes
+            ctx.beginPath();
+            ctx.moveTo(50, 10);
+            ctx.lineTo(50, height - 30);
+            ctx.lineTo(width - 30, height - 30);
+            ctx.stroke();
+
+            // Y-axis label with units
+            ctx.save();
+            ctx.translate(15, height / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.textAlign = 'center';
+            const yAxisLabel = getYAxisLabel(canvasId);
+            ctx.fillText(yAxisLabel, 0, 0);
+            ctx.restore();
+
+            // X-axis label
+            ctx.textAlign = 'center';
+            ctx.fillText('Time (s)', width / 2, height - 5);
+        }
+
+        function getYAxisLabel(canvasId) {
+            switch (canvasId) {
+                case 'throughputGraph':
+                    return 'Throughput (Mbps)';
+                case 'transmittedPacketsGraph':
+                    return 'Transmitted Packets/sec';
+                case 'retransmittedPacketsGraph':
+                    return 'Retransmitted Packets/sec';
+                default:
+                    return 'Value';
+            }
+        }
+
+        function startSimulation() {
+            if (simulationRunning && simulationPaused) {
+                simulationPaused = false;
+                return;
+            }
+            simulationRunning = true;
+            simulationPaused = false;
+            time = 0;
+            dataPoints = {};
+            eventLog = [];
+            packetLossQueue = false;
+            clearEventLog();
+
+            // Initialize dataPoints and algorithm instances for each algorithm
+            algorithmInstances = {};
+            activeAlgorithms.forEach(algoName => {
+                dataPoints[algoName] = [];
+                // Get algorithm parameters
+                const params = getAlgorithmParameters(algoName);
+                // Create algorithm instance
+                const AlgoClass = algorithmClasses[algoName];
+                const algoInstance = new AlgoClass(capitalizeFirstLetter(algoName), params);
+                algoInstance.initializeState();
+                algorithmInstances[algoName] = algoInstance;
+            });
+
+            // Get network parameters
+            getNetworkParameters();
+            simulationInterval = setInterval(runSimulationStep, 10); // Run simulation step every 10 ms
+            animationInterval = setInterval(updateGraphs, 33); // Update graphs every 33 ms (~30 FPS)
+        }
+
+        function getAlgorithmParameters(algoName) {
+            const params = {};
+            params.initialCwnd = parseFloat(document.getElementById(`initialCwnd-${algoName}`).value);
+            params.initialSsthresh = parseFloat(document.getElementById(`initialSsthresh-${algoName}`).value);
+            if (algoName === 'cubic') {
+                params.cubicC = parseFloat(document.getElementById(`cubicC-${algoName}`).value);
+                params.cubicBeta = parseFloat(document.getElementById(`cubicBeta-${algoName}`).value);
+            } else if (algoName === 'vegas') {
+                params.vegasAlpha = parseFloat(document.getElementById(`vegasAlpha-${algoName}`).value);
+                params.vegasBeta = parseFloat(document.getElementById(`vegasBeta-${algoName}`).value);
+            } else if (algoName === 'bbr') {
+                params.bbrPacingGain = parseFloat(document.getElementById(`bbrPacingGain-${algoName}`).value);
+            }
+            return params;
+        }
+
+        function getNetworkParameters() {
+            networkParams.bandwidth = parseFloat(document.getElementById('bandwidth').value); // Mbps
+            networkParams.rtt = parseFloat(document.getElementById('rtt').value); // ms
+            networkParams.packetSize = parseFloat(document.getElementById('packetSize').value); // bytes
+            networkParams.queueSize = parseFloat(document.getElementById('queueSize').value); // packets
+            networkParams.backgroundTraffic = parseFloat(document.getElementById('backgroundTraffic').value); // Mbps
+            networkParams.linkCapacityPacketsPerSec = (networkParams.bandwidth * 1000000) / (networkParams.packetSize * 8); // packets per second
+            networkParams.bdp = (networkParams.bandwidth * 1000000) * (networkParams.rtt / 1000) / (networkParams.packetSize * 8); // in packets
+            networkParams.queueOccupancy = 0;
+        }
+
+        function pauseSimulation() {
+            simulationPaused = true;
+        }
+
+        function resetSimulation() {
+            simulationRunning = false;
+            simulationPaused = false;
+            clearInterval(simulationInterval);
+            clearInterval(animationInterval);
+            time = 0;
+            dataPoints = {};
+            eventLog = [];
+            packetLossQueue = false;
+            clearEventLog();
+            initializeGraphs();
+        }
+
+        // Ensure that packetLossQueue is reset after the bulk loss period ends
+        function runSimulationStep() {
+            if (simulationPaused) return;
+
+            // Update time in milliseconds
+            time += 10;
+
+            const deltaTime = 10 / 1000; // Convert to seconds
+
+            // Simulate each algorithm
+            for (const algoName in algorithmInstances) {
+                const algoInstance = algorithmInstances[algoName];
+                algoInstance.simulate(deltaTime);
+
+                // Collect data for plotting
+                const state = algoInstance.state;
+                const throughput = (state.successfulPackets * networkParams.packetSize * 8) / (deltaTime * 1000000); // Mbps
+                const transmittedPacketsPerSec = state.transmittedPackets / deltaTime;
+                const retransmittedPacketsPerSec = state.retransmittedPackets / deltaTime;
+
+                dataPoints[algoName].push({
+                    time: time / 1000, // Convert to seconds
+                    throughput: throughput,
+                    transmittedPackets: transmittedPacketsPerSec,
+                    retransmittedPackets: retransmittedPacketsPerSec
+                });
+
+                // Keep only the data within the last 30 seconds
+                dataPoints[algoName] = dataPoints[algoName].filter(point => point.time >= (time / 1000) - maxTimeWindow);
+            }
+
+            // Reset packet loss flag if the packet loss duration has ended
+            if (packetLossQueue && packetLossQueueEndTime && time >= packetLossQueueEndTime) {
+                packetLossQueue = false;
+                packetLossQueueEndTime = null;
+                eventLog.push({
+                    timestamp: (time / 1000).toFixed(2),
+                    algorithm: 'Network',
+                    eventType: 'Packet Loss Ended',
+                    details: `Bulk packet loss ended at time ${(time / 1000).toFixed(2)}s`
+                });
+                updateEventLog();
+            }
+
+            // Update event log every second
+            if (time % 1000 === 0) {
+                updateEventLog();
+            }
+        }
+
+        function updateGraphs() {
+            // Update each graph with the latest data for all active algorithms
+            drawGraph('throughputGraph', 'throughput', 'Mbps');
+            drawGraph('transmittedPacketsGraph', 'transmittedPackets', 'Packets/sec');
+            drawGraph('retransmittedPacketsGraph', 'retransmittedPackets', 'Packets/sec');
+        }
+
+        function drawGraph(canvasId, dataKey, unit) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw axes
+            drawAxes(ctx, canvas, canvasId);
+
+            // Colors for algorithms
+            const colors = {
+                'tahoe': 'red',
+                'reno': 'blue',
+                'newreno': 'green',
+                'cubic': 'purple',
+                'vegas': 'orange',
+                'bbr': 'brown'
+            };
+
+            const width = canvas.width;
+            const height = canvas.height;
+
+            // Find the maximum value for scaling
+            const maxDataValue = getMaxDataValue(dataKey);
+
+            // Plot data for each active algorithm
+            activeAlgorithms.forEach(algo => {
+                ctx.beginPath();
+                ctx.strokeStyle = colors[algo];
+                let previousPoint = null;
+                dataPoints[algo].forEach(point => {
+                    const timeOffset = (time / 1000) > maxTimeWindow ? (time / 1000) - maxTimeWindow : 0;
+                    const x = 50 + ((point.time - timeOffset) / maxTimeWindow) * (width - 80);
+                    const y = height - 30 - (point[dataKey] / maxDataValue) * (height - 60);
+                    if (previousPoint) {
+                        ctx.lineTo(x, y);
+                    } else {
+                        ctx.moveTo(x, y);
+                    }
+                    previousPoint = { x, y };
+                });
+                ctx.stroke();
+
+                // Add legend
+                ctx.fillStyle = colors[algo];
+                ctx.fillRect(width - 100, 20 + activeAlgorithms.indexOf(algo) * 20, 10, 10);
+                ctx.fillStyle = 'black';
+                ctx.fillText(`TCP ${capitalizeFirstLetter(algo)}`, width - 85, 30 + activeAlgorithms.indexOf(algo) * 20);
+            });
+
+            // Y-axis ticks and labels
+            for (let i = 0; i <= 5; i++) {
+                let y = height - 30 - (i * ((height - 60) / 5));
+                ctx.moveTo(45, y);
+                ctx.lineTo(50, y);
+                ctx.stroke();
+                ctx.textAlign = 'right';
+                const label = ((i * maxDataValue) / 5).toFixed(1);
+                ctx.fillText(label, 45, y + 3);
+            }
+
+            // X-axis ticks and labels
+            for (let i = 0; i <= 5; i++) {
+                let x = 50 + (i * ((width - 80) / 5));
+                ctx.moveTo(x, height - 30);
+                ctx.lineTo(x, height - 25);
+                ctx.stroke();
+                ctx.textAlign = 'center';
+                const timeOffset = (time / 1000) > maxTimeWindow ? (time / 1000) - maxTimeWindow : 0;
+                const label = (timeOffset + (i * (maxTimeWindow / 5))).toFixed(0);
+                ctx.fillText(label, x, height - 15);
+            }
+        }
+
+        function getMaxDataValue(dataKey) {
+            let max = 1;
+            activeAlgorithms.forEach(algo => {
+                dataPoints[algo].forEach(point => {
+                    if (point[dataKey] > max) {
+                        max = point[dataKey];
+                    }
+                });
+            });
+            return max;
+        }
+
+        function updateEventLog() {
+            const eventLogDiv = document.getElementById('event-log');
+            eventLogDiv.innerHTML = '';
+            eventLog.forEach(event => {
+                const p = document.createElement('p');
+                p.innerHTML = `[${event.timestamp}s] <strong>${event.algorithm}</strong> ${event.eventType}: ${event.details}`;
+                eventLogDiv.appendChild(p);
+            });
+            // Scroll to the bottom
+            eventLogDiv.scrollTop = eventLogDiv.scrollHeight;
+        }
+
+        function clearEventLog() {
+            const eventLogDiv = document.getElementById('event-log');
+            eventLogDiv.innerHTML = '';
+        }
+
+        function injectPacketLoss(type) {
+            if (type === 'single') {
+                packetLossQueue = true;
+                packetLossQueueEndTime = time + 10; // 10 ms duration
+                eventLog.push({
+                    timestamp: (time / 1000).toFixed(2),
+                    algorithm: 'Network',
+                    eventType: 'Packet Loss',
+                    details: `User-injected single packet loss at time ${(time / 1000).toFixed(2)}s`
+                });
+            } else if (type === 'bulk1s') {
+                packetLossQueue = true;
+                packetLossQueueEndTime = time + 1000; // 1 second duration
+                eventLog.push({
+                    timestamp: (time / 1000).toFixed(2),
+                    algorithm: 'Network',
+                    eventType: 'Packet Loss',
+                    details: `User-injected bulk packet loss for 1 second at time ${(time / 1000).toFixed(2)}s`
+                });
+            } else if (type === 'bulk50ms') {
+                packetLossQueue = true;
+                packetLossQueueEndTime = time + 50; // 10 ms duration
+                eventLog.push({
+                    timestamp: (time / 1000).toFixed(2),
+                    algorithm: 'Network',
+                    eventType: 'Packet Loss',
+                    details: `User-injected bulk packet loss for 50 ms at time ${(time / 1000).toFixed(2)}s`
+                });
+            }
+            updateEventLog();
+        }
+    </script>
+</body>
+
+</html>
