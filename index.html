@@ -1,6 +1,7 @@
 <!-- HTML Structure -->
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <title>TCP Congestion Control Simulation</title>
@@ -8,269 +9,275 @@
         #graph {
             border: 1px solid black;
         }
+
         #controls {
-            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            max-width: 320px;
         }
     </style>
 </head>
+
 <body>
 
-<canvas id="graph" width="800" height="400"></canvas>
+    <canvas id="graph" width="800" height="400"></canvas>
 
-<div id="controls">
-    <button id="startBtn">Start</button>
-    <button id="stopBtn">Stop</button>
-    <button id="resetBtn">Reset</button>
-    <select id="algorithmSelect">
-        <option value="reno">Reno</option>
-        <option value="newreno">NewReno</option>
-        <option value="tahoe">Tahoe</option>
-        <option value="cubic">Cubic</option>
-        <option value="bbr">BBR</option>
-    </select>
-    <button id="induceLossBtn">Induce Packet Loss</button>
-    <button id="bulkLossBtn">Bulk Packet Loss</button> <!-- New button for bulk packet loss -->
-</div>
+    <div>
+        <button id="startBtn">Start</button>
+        <button id="stopBtn">Stop</button>
+        <button id="resetBtn">Reset</button>
+        <select id="algorithmSelect">
+            <option value="reno">Reno</option>
+            <option value="newreno">NewReno</option>
+            <option value="tahoe">Tahoe</option>
+            <option value="cubic">Cubic</option>
+            <option value="bbr">BBR</option>
+        </select>
+        <button id="induceLossBtn">Induce Packet Loss</button>
+        <button id="bulkLossBtn">Bulk Packet Loss</button>
+    </div>
+    <div id="controls">
+    </div>
 
-<div id="info"></div>
+    <div id="info"></div>
 
-<script>
-// JavaScript Code
-const canvas = document.getElementById('graph');
-const ctx = canvas.getContext('2d');
-const startBtn = document.getElementById('startBtn');
-const stopBtn = document.getElementById('stopBtn');
-const resetBtn = document.getElementById('resetBtn');
-const algorithmSelect = document.getElementById('algorithmSelect');
-const induceLossBtn = document.getElementById('induceLossBtn');
-const bulkLossBtn = document.getElementById('bulkLossBtn'); // New button for bulk packet loss
-const infoPanel = document.getElementById('info');
+    <script>
+        // JavaScript Code
+        const canvas = document.getElementById('graph');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const algorithmSelect = document.getElementById('algorithmSelect');
+        const induceLossBtn = document.getElementById('induceLossBtn');
+        const bulkLossBtn = document.getElementById('bulkLossBtn'); // New button for bulk packet loss
+        const infoPanel = document.getElementById('info');
 
-let animationId;
-let time = 0;
-let cwnd = 1; // Congestion Window
-let ssthresh = 50; // Slow Start Threshold
-let state = 'slow_start';
-let packetLoss = false;
-let bulkPacketLoss = false; // New variable for bulk packet loss
+        let animationId;
+        let time = 0;
+        let cwnd = 1; // Congestion Window
+        let ssthresh = 50; // Slow Start Threshold
+        let state = 'slow_start';
+        let packetLoss = false;
+        let bulkPacketLoss = false; // New variable for bulk packet loss
 
-let algorithm = 'reno';
-let lastMaxCwnd = 0;
-let K = 0;
-let W_max = 0;
-let C = 0.4;
-let beta = 0.7;
-let RTT = 100; // ms
-let BDP = 1; // Bandwidth-Delay Product
+        let algorithm = 'reno';
+        let lastMaxCwnd = 0;
+        let K = 0;
+        let W_max = 0;
+        let C = 0.4;
+        let beta = 0.7;
+        let RTT = 100; // ms
+        let BDP = 1; // Bandwidth-Delay Product
 
-// New variables
-let cwndHistory = [];
-const SIMULATION_SPEED = 50; // ms between updates
-let lastUpdateTime = 0;
-let max_cwnd = 50; // Maximum congestion window size
-let rwnd = 65535; // Receiver's advertised window (in bytes)
-let MSS = 1460; // Maximum Segment Size (in bytes)
+        // New variables
+        let cwndHistory = [];
+        const SIMULATION_SPEED = 50; // ms between updates
+        let lastUpdateTime = 0;
+        let max_cwnd = 50; // Maximum congestion window size
+        let rwnd = 65535; // Receiver's advertised window (in bytes)
+        let MSS = 1460; // Maximum Segment Size (in bytes)
 
-// BBR-specific variables
-let estimatedBandwidth = 1; // Estimated bandwidth in MSS/RTT
-let minRTT = RTT; // Minimum RTT observed
+        // BBR-specific variables
+        let estimatedBandwidth = 1; // Estimated bandwidth in MSS/RTT
+        let minRTT = RTT; // Minimum RTT observed
 
-function drawGraph() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+        function drawGraph() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Determine the maximum cwnd value for scaling
-    const maxCwnd = max_cwnd; // Use max_cwnd as the maximum value for scaling
-    const minCwnd = Math.min(...cwndHistory, 1);
-    const latestCwnd = cwndHistory[cwndHistory.length - 1] || 0;
+            // Determine the maximum cwnd value for scaling
+            const maxCwnd = max_cwnd; // Use max_cwnd as the maximum value for scaling
+            const minCwnd = Math.min(...cwndHistory, 1);
+            const latestCwnd = cwndHistory[cwndHistory.length - 1] || 0;
 
-    // Determine the maximum time value for scaling
-    const maxTime = Math.min(cwndHistory.length, 100); // Show only the last 10 seconds (assuming 10 updates per second)
-    const minTime = Math.max(0, cwndHistory.length - 100);
+            // Determine the maximum time value for scaling
+            const maxTime = Math.min(cwndHistory.length, 100); // Show only the last 10 seconds (assuming 10 updates per second)
+            const minTime = Math.max(0, cwndHistory.length - 100);
 
-    // Draw axes
-    ctx.beginPath();
-    ctx.moveTo(50, 350);
-    ctx.lineTo(750, 350); // X-axis
-    ctx.moveTo(50, 350);
-    ctx.lineTo(50, 50);   // Y-axis
-    ctx.stroke();
+            // Draw axes
+            ctx.beginPath();
+            ctx.moveTo(50, 350);
+            ctx.lineTo(750, 350); // X-axis
+            ctx.moveTo(50, 350);
+            ctx.lineTo(50, 50);   // Y-axis
+            ctx.stroke();
 
-    // Draw congestion window history
-    ctx.beginPath();
-    ctx.strokeStyle = 'blue';
-    for (let i = minTime; i < cwndHistory.length; i++) {
-        let x = 50 + ((maxTime - (i - minTime)) / maxTime) * 700; // Adjust scaling based on maxTime and invert X-axis
-        let y = 350 - (cwndHistory[i] / maxCwnd) * 300; // Adjust scaling based on maxCwnd
-        if (i === minTime) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
+            // Draw congestion window history
+            ctx.beginPath();
+            ctx.strokeStyle = 'blue';
+            for (let i = minTime; i < cwndHistory.length; i++) {
+                let x = 50 + ((maxTime - (i - minTime)) / maxTime) * 700; // Adjust scaling based on maxTime and invert X-axis
+                let y = 350 - (cwndHistory[i] / maxCwnd) * 300; // Adjust scaling based on maxCwnd
+                if (i === minTime) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+            ctx.stroke();
+
+            // Draw labels and units
+            ctx.fillStyle = 'black';
+            ctx.font = '12px Arial';
+            ctx.fillText('Time (s)', 725, 365);
+            if (cwndHistory.length >= 100) {
+                ctx.fillText('0s', 50, 365);
+                ctx.fillText('-10s', 725, 365);
+            }
+            ctx.save();
+            ctx.translate(15, 200);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('Congestion Window (cwnd)', 0, 0);
+            ctx.restore();
+
+            // Draw min, max, and latest values on Y-axis
+            ctx.fillText(`Min: ${minCwnd.toFixed(2)}`, 5, 350);
+            ctx.fillText(`Max: ${maxCwnd.toFixed(2)}`, 5, 50);
+            ctx.fillText(`Latest: ${latestCwnd.toFixed(2)}`, 5, 200);
+
+            // Draw horizontal line for latest cwnd value
+            ctx.beginPath();
+            ctx.strokeStyle = 'red';
+            ctx.setLineDash([5, 5]);
+            const latestY = 350 - (latestCwnd / maxCwnd) * 300;
+            ctx.moveTo(50, latestY);
+            ctx.lineTo(750, latestY);
+            ctx.stroke();
+            ctx.setLineDash([]);
         }
-    }
-    ctx.stroke();
 
-    // Draw labels and units
-    ctx.fillStyle = 'black';
-    ctx.font = '12px Arial';
-    ctx.fillText('Time (s)', 725, 365);
-    if (cwndHistory.length >= 100) {
-        ctx.fillText('0s', 50, 365);
-        ctx.fillText('-10s', 725, 365);
-    }
-    ctx.save();
-    ctx.translate(15, 200);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillText('Congestion Window (cwnd)', 0, 0);
-    ctx.restore();
+        function updateCongestionWindow() {
+            // Increment time based on SIMULATION_SPEED
+            time += SIMULATION_SPEED / 1000; // Convert ms to seconds
 
-    // Draw min, max, and latest values on Y-axis
-    ctx.fillText(`Min: ${minCwnd.toFixed(2)}`, 5, 350);
-    ctx.fillText(`Max: ${maxCwnd.toFixed(2)}`, 5, 50);
-    ctx.fillText(`Latest: ${latestCwnd.toFixed(2)}`, 5, 200);
+            switch (algorithm) {
+                case 'reno':
+                    updateReno();
+                    break;
+                case 'newreno':
+                    updateNewReno();
+                    break;
+                case 'tahoe':
+                    updateTahoe();
+                    break;
+                case 'cubic':
+                    updateCubic();
+                    break;
+                case 'bbr':
+                    updateBBR();
+                    break;
+            }
 
-    // Draw horizontal line for latest cwnd value
-    ctx.beginPath();
-    ctx.strokeStyle = 'red';
-    ctx.setLineDash([5, 5]);
-    const latestY = 350 - (latestCwnd / maxCwnd) * 300;
-    ctx.moveTo(50, latestY);
-    ctx.lineTo(750, latestY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-}
+            // Apply flow control
+            cwnd = Math.min(cwnd, rwnd / MSS, max_cwnd);
 
-function updateCongestionWindow() {
-    // Increment time based on SIMULATION_SPEED
-    time += SIMULATION_SPEED / 1000; // Convert ms to seconds
+            // Store cwnd history for graphing
+            cwndHistory.push(cwnd);
 
-    switch (algorithm) {
-        case 'reno':
-            updateReno();
-            break;
-        case 'newreno':
-            updateNewReno();
-            break;
-        case 'tahoe':
-            updateTahoe();
-            break;
-        case 'cubic':
-            updateCubic();
-            break;
-        case 'bbr':
-            updateBBR();
-            break;
-    }
+            // Limit cwndHistory to last 100 seconds of data
+            if (cwndHistory.length > 100 * (1000 / SIMULATION_SPEED)) {
+                cwndHistory.shift();
+            }
 
-    // Apply flow control
-    cwnd = Math.min(cwnd, rwnd / MSS, max_cwnd);
-
-    // Store cwnd history for graphing
-    cwndHistory.push(cwnd);
-
-    // Limit cwndHistory to last 100 seconds of data
-    if (cwndHistory.length > 100 * (1000 / SIMULATION_SPEED)) {
-        cwndHistory.shift();
-    }
-
-    // Update information panel
-    updateInfoPanel();
-}
-
-function updateReno() {
-    if (packetLoss || bulkPacketLoss) {
-        ssthresh = Math.max(2, Math.floor(cwnd / 2));
-        cwnd = ssthresh;
-        state = 'congestion_avoidance';
-        packetLoss = false;
-    } else if (state === 'slow_start') {
-        if (cwnd >= ssthresh) {
-            state = 'congestion_avoidance';
-            cwnd += 1 / cwnd; // Increase by 1 MSS per RTT
-        } else {
-            cwnd = Math.min(cwnd * 2, max_cwnd);
+            // Update information panel
+            updateInfoPanel();
         }
-    } else if (state === 'congestion_avoidance') {
-        cwnd += 1 / cwnd; // Increase by 1 MSS per RTT
-    }
-}
 
-function updateNewReno() {
-    if (packetLoss || bulkPacketLoss) {
-        ssthresh = Math.max(2, Math.floor(cwnd / 2));
-        cwnd = ssthresh;
-        state = 'fast_recovery';
-        packetLoss = false;
-    } else if (state === 'slow_start') {
-        if (cwnd >= ssthresh) {
-            state = 'congestion_avoidance';
-            cwnd += 1 / cwnd;
-        } else {
-            cwnd = Math.min(cwnd * 2, max_cwnd);
+        function updateReno() {
+            if (packetLoss || bulkPacketLoss) {
+                ssthresh = Math.max(2, Math.floor(cwnd / 2));
+                cwnd = ssthresh;
+                state = 'congestion_avoidance';
+                packetLoss = false;
+            } else if (state === 'slow_start') {
+                if (cwnd >= ssthresh) {
+                    state = 'congestion_avoidance';
+                    cwnd += 1 / cwnd; // Increase by 1 MSS per RTT
+                } else {
+                    cwnd = Math.min(cwnd * 2, max_cwnd);
+                }
+            } else if (state === 'congestion_avoidance') {
+                cwnd += 1 / cwnd; // Increase by 1 MSS per RTT
+            }
         }
-    } else if (state === 'congestion_avoidance') {
-        cwnd += 1 / cwnd;
-    } else if (state === 'fast_recovery') {
-        cwnd = ssthresh;
-        state = 'congestion_avoidance';
-    }
-}
 
-function updateTahoe() {
-    if (packetLoss || bulkPacketLoss) {
-        ssthresh = Math.max(2, Math.floor(cwnd / 2));
-        cwnd = 1;
-        state = 'slow_start';
-        packetLoss = false;
-    } else if (state === 'slow_start') {
-        if (cwnd >= ssthresh) {
-            state = 'congestion_avoidance';
-            cwnd += 1 / cwnd;
-        } else {
-            cwnd = Math.min(cwnd * 2, max_cwnd);
+        function updateNewReno() {
+            if (packetLoss || bulkPacketLoss) {
+                ssthresh = Math.max(2, Math.floor(cwnd / 2));
+                cwnd = ssthresh;
+                state = 'fast_recovery';
+                packetLoss = false;
+            } else if (state === 'slow_start') {
+                if (cwnd >= ssthresh) {
+                    state = 'congestion_avoidance';
+                    cwnd += 1 / cwnd;
+                } else {
+                    cwnd = Math.min(cwnd * 2, max_cwnd);
+                }
+            } else if (state === 'congestion_avoidance') {
+                cwnd += 1 / cwnd;
+            } else if (state === 'fast_recovery') {
+                cwnd = ssthresh;
+                state = 'congestion_avoidance';
+            }
         }
-    } else if (state === 'congestion_avoidance') {
-        cwnd += 1 / cwnd;
-    }
-}
 
-function updateCubic() {
-    if (packetLoss || bulkPacketLoss) {
-        W_max = cwnd;
-        cwnd = Math.max(cwnd * beta, 2);
-        ssthresh = cwnd;
-        K = Math.cbrt(W_max * (1 - beta) / C);
-        state = 'congestion_avoidance';
-        packetLoss = false;
-    } else {
-        let t = time - K;
-        cwnd = Math.min(C * Math.pow(t, 3) + W_max, max_cwnd);
-    }
-}
-
-function updateBBR() {
-    // Simplified BBR implementation
-    if (packetLoss || bulkPacketLoss) {
-        cwnd = Math.max(cwnd / 2, 4);
-        packetLoss = false;
-    } else {
-        // Estimate bandwidth and minRTT
-        estimatedBandwidth = Math.max(estimatedBandwidth, cwnd / minRTT);
-        minRTT = Math.min(minRTT, RTT);
-
-        // Calculate target cwnd
-        let targetCwnd = estimatedBandwidth * minRTT;
-
-        // Adjust cwnd towards target
-        if (cwnd < targetCwnd) {
-            cwnd += 1; // Increase by 1 MSS per RTT
-        } else if (cwnd > targetCwnd) {
-            cwnd -= 1; // Decrease by 1 MSS per RTT
+        function updateTahoe() {
+            if (packetLoss || bulkPacketLoss) {
+                ssthresh = Math.max(2, Math.floor(cwnd / 2));
+                cwnd = 1;
+                state = 'slow_start';
+                packetLoss = false;
+            } else if (state === 'slow_start') {
+                if (cwnd >= ssthresh) {
+                    state = 'congestion_avoidance';
+                    cwnd += 1 / cwnd;
+                } else {
+                    cwnd = Math.min(cwnd * 2, max_cwnd);
+                }
+            } else if (state === 'congestion_avoidance') {
+                cwnd += 1 / cwnd;
+            }
         }
-    }
-}
 
-function updateInfoPanel() {
-    infoPanel.innerHTML = `
+        function updateCubic() {
+            if (packetLoss || bulkPacketLoss) {
+                W_max = cwnd;
+                cwnd = Math.max(cwnd * beta, 2);
+                ssthresh = cwnd;
+                K = Math.cbrt(W_max * (1 - beta) / C);
+                state = 'congestion_avoidance';
+                packetLoss = false;
+            } else {
+                let t = time - K;
+                cwnd = Math.min(C * Math.pow(t, 3) + W_max, max_cwnd);
+            }
+        }
+
+        function updateBBR() {
+            // Simplified BBR implementation
+            if (packetLoss || bulkPacketLoss) {
+                cwnd = Math.max(cwnd / 2, 4);
+                packetLoss = false;
+            } else {
+                // Estimate bandwidth and minRTT
+                estimatedBandwidth = Math.max(estimatedBandwidth, cwnd / minRTT);
+                minRTT = Math.min(minRTT, RTT);
+
+                // Calculate target cwnd
+                let targetCwnd = estimatedBandwidth * minRTT;
+
+                // Adjust cwnd towards target
+                if (cwnd < targetCwnd) {
+                    cwnd += 1; // Increase by 1 MSS per RTT
+                } else if (cwnd > targetCwnd) {
+                    cwnd -= 1; // Decrease by 1 MSS per RTT
+                }
+            }
+        }
+
+        function updateInfoPanel() {
+            infoPanel.innerHTML = `
         <h3>Current State</h3>
         <p>Algorithm: ${algorithmSelect.value}</p>
         <p>State: ${state}</p>
@@ -281,95 +288,96 @@ function updateInfoPanel() {
         <p>Estimated Bandwidth: ${estimatedBandwidth.toFixed(2)} MSS/RTT</p>
         <p>Min RTT: ${minRTT.toFixed(2)} ms</p>
     `;
-}
+        }
 
-function animate(currentTime) {
-    if (currentTime - lastUpdateTime >= SIMULATION_SPEED) {
-        updateCongestionWindow();
+        function animate(currentTime) {
+            if (currentTime - lastUpdateTime >= SIMULATION_SPEED) {
+                updateCongestionWindow();
+                drawGraph();
+                lastUpdateTime = currentTime;
+            }
+            animationId = requestAnimationFrame(animate);
+        }
+
+        startBtn.addEventListener('click', () => {
+            if (!animationId) {
+                lastUpdateTime = performance.now();
+                animationId = requestAnimationFrame(animate);
+            }
+        });
+
+        stopBtn.addEventListener('click', () => {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            time = 0;
+            cwnd = 1;
+            ssthresh = 50;
+            state = 'slow_start';
+            packetLoss = false;
+            bulkPacketLoss = false; // Reset bulk packet loss
+            cwndHistory = [];
+            // Reset max_cwnd and rwnd
+            max_cwnd = 50;
+            rwnd = 65535;
+            // Reset BBR-specific variables
+            estimatedBandwidth = 1;
+            minRTT = RTT;
+            drawGraph();
+            updateInfoPanel();
+        });
+
+        induceLossBtn.addEventListener('click', () => {
+            packetLoss = true;
+        });
+
+        bulkLossBtn.addEventListener('click', () => {
+            bulkPacketLoss = true;
+            setTimeout(() => {
+                bulkPacketLoss = false;
+            }, 1000);
+        });
+
+        algorithmSelect.addEventListener('change', (e) => {
+            algorithm = e.target.value;
+            resetBtn.click();
+        });
+
+        // Add new controls for max_cwnd and rwnd
+        const maxCwndInput = document.createElement('input');
+        maxCwndInput.type = 'number';
+        maxCwndInput.value = max_cwnd;
+        maxCwndInput.addEventListener('change', (e) => {
+            max_cwnd = parseInt(e.target.value);
+            updateInfoPanel();
+        });
+
+        const rwndInput = document.createElement('input');
+        rwndInput.type = 'number';
+        rwndInput.value = rwnd;
+        rwndInput.addEventListener('change', (e) => {
+            rwnd = parseInt(e.target.value);
+            updateInfoPanel();
+        });
+
+        const controlsDiv = document.getElementById('controls');
+        controlsDiv.appendChild(document.createTextNode('Max cwnd (MSS): '));
+        controlsDiv.appendChild(maxCwndInput);
+        controlsDiv.appendChild(document.createTextNode(' Receiver Window (bytes): '));
+        controlsDiv.appendChild(rwndInput);
+
+        // Initial draw
         drawGraph();
-        lastUpdateTime = currentTime;
-    }
-    animationId = requestAnimationFrame(animate);
-}
-
-startBtn.addEventListener('click', () => {
-    if (!animationId) {
-        lastUpdateTime = performance.now();
-        animationId = requestAnimationFrame(animate);
-    }
-});
-
-stopBtn.addEventListener('click', () => {
-    if (animationId) {
-        cancelAnimationFrame(animationId);
-        animationId = null;
-    }
-});
-
-resetBtn.addEventListener('click', () => {
-    if (animationId) {
-        cancelAnimationFrame(animationId);
-        animationId = null;
-    }
-    time = 0;
-    cwnd = 1;
-    ssthresh = 50;
-    state = 'slow_start';
-    packetLoss = false;
-    bulkPacketLoss = false; // Reset bulk packet loss
-    cwndHistory = [];
-    // Reset max_cwnd and rwnd
-    max_cwnd = 50;
-    rwnd = 65535;
-    // Reset BBR-specific variables
-    estimatedBandwidth = 1;
-    minRTT = RTT;
-    drawGraph();
-    updateInfoPanel();
-});
-
-induceLossBtn.addEventListener('click', () => {
-    packetLoss = true;
-});
-
-bulkLossBtn.addEventListener('click', () => {
-    bulkPacketLoss = true;
-    setTimeout(() => {
-        bulkPacketLoss = false;
-    }, 1000);
-});
-
-algorithmSelect.addEventListener('change', (e) => {
-    algorithm = e.target.value;
-    resetBtn.click();
-});
-
-// Add new controls for max_cwnd and rwnd
-const maxCwndInput = document.createElement('input');
-maxCwndInput.type = 'number';
-maxCwndInput.value = max_cwnd;
-maxCwndInput.addEventListener('change', (e) => {
-    max_cwnd = parseInt(e.target.value);
-    updateInfoPanel();
-});
-
-const rwndInput = document.createElement('input');
-rwndInput.type = 'number';
-rwndInput.value = rwnd;
-rwndInput.addEventListener('change', (e) => {
-    rwnd = parseInt(e.target.value);
-    updateInfoPanel();
-});
-
-const controlsDiv = document.getElementById('controls');
-controlsDiv.appendChild(document.createTextNode('Max cwnd (MSS): '));
-controlsDiv.appendChild(maxCwndInput);
-controlsDiv.appendChild(document.createTextNode(' Receiver Window (bytes): '));
-controlsDiv.appendChild(rwndInput);
-
-// Initial draw
-drawGraph();
-updateInfoPanel();
-</script>
+        updateInfoPanel();
+    </script>
 </body>
+
 </html>
